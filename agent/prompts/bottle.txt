@@ -1,0 +1,1 @@
+Open the bottle. Success: the lid is open by more than 60 degrees from its closed position while the bottle stays upright (tilt below 25 degrees) for 0.4 continuous seconds (8 control ticks); allow at least 12 ticks of wait.

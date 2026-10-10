@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "detent-bottle-sim"
+version = "0.1.0"
+description = "Bimanual Panda MuJoCo task: open a free-standing bottle with a rocker latch and detent safety loop"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Jr-Jen Chen" }]
+requires-python = ">=3.10"
+dependencies = [
+    "mujoco==3.4.0",
+    "numpy==1.26.4",
+    "scipy==1.16.3",
+    "Pillow==12.0.0",
+    "gymnasium==1.2.2",
+]
+
+[project.optional-dependencies]
+agent = ["httpx==0.28.1"]
+video = ["imageio[ffmpeg]==2.37.0"]
+dev = ["pytest==8.4.2", "httpx==0.28.1"]
+
+[tool.setuptools.packages.find]
+include = ["detent_bottle*"]
+
+[tool.setuptools.package-data]
+detent_bottle = ["assets/panda/*.xml", "assets/panda/LICENSE.robosuite", "assets/panda/meshes/*.stl"]
