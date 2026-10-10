@@ -9,3 +9,5 @@ runs/
 *.npz
 MUJOCO_LOG.TXT
 .pytest_cache/
+build/
+dist/
