@@ -80,8 +80,8 @@ training and testing.
 - **With the density matched, the noise bursts did not help.** `expert_v2` + `_wide_a` + `_noise`
   (277 demos, 151 in the box) against `expert_v2` + `_wide_a` + `_wide_b` (287 clean, 136 in the
   box) scored 20/30 against 17/30 on test_id (p = .6) and 3/20 against 10/20 on test_ood
-  (p = .04). The noisy set also leaves fewer clean demos outside the test_id box (126 against
-  151), which may explain part of the test_ood drop. So there is no consistent evidence that
+  (p = .04). The noisy set also leaves fewer demos outside the test_id box (126 against 151,
+  and only 75 of its 126 are clean), which may explain part of the test_ood drop. So there is no consistent evidence that
   these noise bursts help ACT, and the earlier gain was most likely the density confound. The
   noisy collection keeps only the 69% of runs the bursts did not break, so it may simply not
   contain the recoveries the method relies on.
