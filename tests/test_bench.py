@@ -4,7 +4,7 @@ from detent_bottle.gym_env import DetentBottleEnv
 from detent_bottle.policy import opening_sequence
 from bench.actions import START_POS, START_ROT, apply_action, from_abs, to_abs
 from bench.expert import posed_sequence
-from bench.poses import TRAIN_RANGE, split
+from bench.poses import OOD_RANGE, TRAIN_RANGE, split
 from bench.rollout import expert_policy
 
 
@@ -36,6 +36,9 @@ def test_splits_fixed_and_disjoint():
     assert not {tuple(p) for p in split('train')} & {tuple(p) for p in split('test_id')}
     assert all(np.all(np.abs(p) <= TRAIN_RANGE) for p in split('test_id'))
     assert all(np.any(np.abs(p) > TRAIN_RANGE) for p in split('test_ood'))
+    tests = {tuple(p) for p in split('test_id') + split('test_ood')}
+    assert not {tuple(p) for p in split('train_wide')} & tests
+    assert all(np.all(np.abs(p) <= OOD_RANGE) for p in split('train_wide'))
 
 
 def test_bottle_pose_yaw_is_degrees():

@@ -57,6 +57,40 @@ training and testing.
   | ACT on `expert_v1` (100 timed demos, layer 3, 20k steps) | test_id (30) / test_ood (20) | 0% / 0% | 0% / 0% | Never closes either gripper (the idle-wait problem above) |
   | **ACT on `expert_v2`** (100 settle demos, layer 3, 20k steps) | test_id (30) | **86.7%** | 86.7% | ~500 ticks per success. 4 failures: 2 at x=+3.7 cm, y=+2 cm never reach the loop; 1 folds the loop but misses the button; 1 tips the bottle mid-fold |
   | **ACT on `expert_v2`** | test_ood (20) | **35%** | 45% | Mostly fails outside the training range, usually before folding the loop, often after pushing the bottle 4-7 cm |
+  | ACT on `expert_v3_wide_a` + `_b` (187 clean `train_wide` demos, layer 3, 25k steps) | test_id (30) | 26.7% | 30% | Pinches about 1 cm beside the loop, then plays out the rest of the task and leaves the bottle leaning 15-30 deg. 3/23 at y < 0, 5/7 at y >= 0 |
+  | ACT on `expert_v3_wide_a` + `_b` | test_ood (20) | 20% | 35% | Inside its training range, yet worse than v2. 0/12 at y < 0. 4 tipped bottles |
+  | ACT on `expert_v3_wide_a` + `_noise` (94 clean + 83 noisy `train_wide` demos, layer 3, 25k steps) | test_id (30) | 63.3% | 80% | 15/23 at y < 0. Wins 16 poses the clean wide model lost and loses 5 it won. 5 of 11 failures fold the loop but miss the button |
+  | ACT on `expert_v3_wide_a` + `_noise` | test_ood (20) | 40% | 50% | Same as v2 (7/20) within noise. 1 tipped bottle |
+  | ACT on `expert_v2` + `_wide_a` + `_wide_b` (287 clean demos, layer 3, 25k steps) | test_id (30) | 56.7% | 93.3% | Folds the loop more often than v2, but 12 of 13 failures then miss the button and push the bottle (tilt 15-30 deg, 1-7 cm). 11 of the 13 are at y < 0 |
+  | ACT on `expert_v2` + `_wide_a` + `_wide_b` | test_ood (20) | 50% | 75% | Best test_ood so far, but not significantly above v2 (p = .52) |
+  | ACT on `expert_v2` + `_wide_a` + `_noise` (194 clean + 83 noisy, layer 3, 25k steps) | test_id (30) | 66.7% | 76.7% | All 10 failures at y < 0. 7 never fold the loop |
+  | ACT on `expert_v2` + `_wide_a` + `_noise` | test_ood (20) | 15% | 40% | Worse than the clean mix (10/20, p = .04). 12 of 17 failures never fold the loop |
+
+- **Spreading the same demo budget over the wide range made ACT worse everywhere.** The wide
+  box is 4.5 times the volume of the train box. Only 36 of the 187 wide demos fall inside the
+  test_id box, against all 100 for `expert_v2`. The wide model's reach targets are as good as
+  v2's, but its pinch lands about 1 cm off, which is enough to miss the loop. At this data scale
+  ACT needs dense demos where it is tested.
+- **Swapping half the clean wide demos for noisy ones helped a lot on test_id, but density is a
+  confound.** 19/30 against 8/30 (Fisher p = .009), with 10 fewer demos in total. On test_ood
+  the gain (8/20 against 4/20) is within noise. However, the noisy collection drew 40 of its
+  120 poses inside the test_id box by chance, and failed less often there. So the noisy model
+  has 51 demos in that box, against 36 for the clean wide model. Part of the gain may come from
+  that.
+- **With the density matched, the noise bursts did not help.** `expert_v2` + `_wide_a` + `_noise`
+  (277 demos, 151 in the box) against `expert_v2` + `_wide_a` + `_wide_b` (287 clean, 136 in the
+  box) scored 20/30 against 17/30 on test_id (p = .6) and 3/20 against 10/20 on test_ood
+  (p = .04). The noisy set also leaves fewer clean demos outside the test_id box (126 against
+  151), which may explain part of the test_ood drop. So there is no consistent evidence that
+  these noise bursts help ACT, and the earlier gain was most likely the density confound. The
+  noisy collection keeps only the 69% of runs the bursts did not break, so it may simply not
+  contain the recoveries the method relies on.
+- **Adding the wide demos to `expert_v2` traded test_id for test_ood.** test_id fell from 26/30
+  to 17/30 (p = .02) and test_ood rose from 7/20 to 10/20 (p = .52). The loop is folded in
+  28/30 test_id episodes, so the reach and fold improved, and the losses are almost all at the
+  button press. Its validation L1 was still falling at 25k steps (.067, .054, .052, .048, .046
+  at 5k-step intervals). It sees each demo about a third as often as v2 did, so it is probably
+  undertrained. A longer run would test that.
 
 - **Training speed (MPS), 5 cameras at 96 px, batch 32:** on an M5 (10-core GPU), 1.6 steps/s
   with the ResNet trained, 4 steps/s with `--freeze-backbone`, and 0.82 steps/s with the ResNet
@@ -95,7 +129,31 @@ five cameras. That is about 6 MB per episode, because zlib can reuse the previou
 size. At 128 px it is about 34 MB.
 
 With `--noise`, the executed arm motion gets Gaussian noise but the recorded `action` is the
-clean expert action (DART-style). This gives recovery data.
+clean expert action (DART-style). This gives recovery data. Noise on every tick keeps the arm
+from ever settling, so a `--settle` expert falls back to the clock. Use bursts instead:
+`--noise .15 --noise-every 30 --noise-len 6` adds 6-tick bursts about every 30 ticks, roughly
+3 mm of target jitter. On 12 wide-range poses the settle expert then succeeds 10/12 (12/12
+clean), at about 574 ticks per episode. With `--noise .25` it succeeded 8/12.
+
+`--split train_wide` draws training poses from the whole ±6 cm, ±20 deg box that test_ood lives
+in. The test splits stay fixed, but for a model trained on `train_wide`, test_ood is inside its
+training range. Its test_ood score therefore measures coverage, not out-of-distribution
+generalisation.
+
+```bash
+python -m bench.collect --n 100 --settle --split train_wide --out data/expert_v3_wide_a
+python -m bench.collect --n 100 --settle --split train_wide --start 100 --out data/expert_v3_wide_b
+python -m bench.collect --n 120 --settle --split train_wide --start 200 --noise .15 --noise-every 30 --noise-len 6 --out data/expert_v3_wide_noise
+python -m bench.act.train --data data/expert_v3_wide_a data/expert_v3_wide_b --out runs/act/v3_wide --steps 25000 --feature-layer 3 --val-episodes 4
+python -m bench.act.train --data data/expert_v3_wide_a data/expert_v3_wide_noise --out runs/act/v3_wide_noise --steps 25000 --feature-layer 3 --val-episodes 4
+```
+
+Clean wide-range collection kept 187/200 (94 + 93, about 500 MB per 100). All 13 failures were
+at yaw below -14 deg, mostly the loop never being grasped, which matches the expert's weak spot
+on test_ood. So `train_wide` has few demos there. The noisy collection kept 83/120 (69%, 689
+MB), lower than the 12-pose check suggested. Its 37 failures are spread over the whole box: 31
+ran out of time without folding the loop and 6 tipped the bottle. Only the runs where the bursts
+did no lasting harm are kept.
 
 ## Evaluate a policy
 

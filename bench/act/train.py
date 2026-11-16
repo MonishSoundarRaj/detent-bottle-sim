@@ -1,6 +1,7 @@
 """Train ACT on bench demonstrations.
 
 python -m bench.act.train --data data/expert_v1 --out runs/act/v1 --steps 20000
+python -m bench.act.train --data data/expert_v3_wide data/expert_v3_wide_noise --out runs/act/v3 --steps 30000
 """
 import argparse
 import json
@@ -38,7 +39,7 @@ def to_device(batch, device, shift=0):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument('--data', required=True); p.add_argument('--out', required=True)
+    p.add_argument('--data', nargs='+', required=True, help='one or more demo directories'); p.add_argument('--out', required=True)
     p.add_argument('--cameras', nargs='+', default=['agentview', 'frontview', 'topview', 'left_wrist', 'right_wrist'])
     p.add_argument('--chunk', type=int, default=50); p.add_argument('--stride', type=int, default=2)
     p.add_argument('--steps', type=int, default=20000); p.add_argument('--batch', type=int, default=32)

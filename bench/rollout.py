@@ -13,9 +13,12 @@ def tilt_deg(sim):
     return float(np.degrees(np.arccos(np.clip(sim.data.body('bottle').xmat.reshape(3, 3)[2, 2], -1, 1))))
 
 
-def rollout(policy, pose, *, cameras=(), image_size=128, max_steps=2400, record=False, noise=0., seed=0, stop_tipped=True):
+def rollout(policy, pose, *, cameras=(), image_size=128, max_steps=2400, record=False, noise=0., noise_every=0, noise_len=1,
+            seed=0, stop_tipped=True):
     """policy(obs, sim) -> 14-D action. With noise > 0, Gaussian noise of that std is added to the
     executed arm motion (not the jaws) while the clean policy action is what gets recorded.
+    noise_every=0 adds it every tick; noise_every=N adds it in bursts of noise_len ticks that start
+    on average every N ticks, so a settle expert can still see the robot come to rest in between.
     With stop_tipped, the episode ends as 'bottle_tipped' once the bottle leans past TIPPED_DEG
     (it can no longer meet the upright success condition). Returns (summary dict, episode dict or None)."""
     t = time.time()
@@ -23,7 +26,7 @@ def rollout(policy, pose, *, cameras=(), image_size=128, max_steps=2400, record=
     env = DetentBottleEnv(image_size=image_size, cameras=cameras, max_steps=max_steps, bottle_pose=tuple(pose))
     obs, info = env.reset(seed=seed)
     if hasattr(policy, 'reset'): policy.reset(env.sim)
-    steps, max_lid, max_loop = [], 0., 0.
+    steps, max_lid, max_loop, burst = [], 0., 0., 0
     while True:
         action = np.asarray(policy(obs, env.sim), np.float32)
         if record:
@@ -32,7 +35,10 @@ def rollout(policy, pose, *, cameras=(), image_size=128, max_steps=2400, record=
                               target_pos=s.targets.copy(), target_rotvec=Rotation.from_matrix(s.rotations).as_rotvec(),
                               stage=getattr(policy, 'stage', '')))
         executed = action.copy()
-        if noise: executed[POSE_DIMS] += rng.normal(0, noise, len(POSE_DIMS))
+        if noise_every and not burst and rng.random() < 1 / noise_every: burst = noise_len
+        if noise and (not noise_every or burst):
+            executed[POSE_DIMS] += rng.normal(0, noise, len(POSE_DIMS))
+            burst = max(burst - 1, 0)
         obs, reward, terminated, truncated, info = env.step(np.clip(executed, -1, 1))
         max_lid, max_loop = max(max_lid, info['privileged']['lid_deg']), max(max_loop, info['privileged']['loop_deg'])
         reason = info['termination_reason']

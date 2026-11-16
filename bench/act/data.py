@@ -24,10 +24,10 @@ def abs_labels(ep):
 
 
 class Demos:
-    def __init__(self, root, cameras, chunk, stride=2, proprio=PROPRIO, episodes=None):
-        files = sorted(glob.glob(os.path.join(root, 'episode_*.npz')))
+    def __init__(self, roots, cameras, chunk, stride=2, proprio=PROPRIO, episodes=None):
+        files = episode_files(roots)
         if episodes is not None: files = [files[i] for i in episodes if i < len(files)]
-        if not files: raise FileNotFoundError(f'no episode_*.npz in {root}')
+        if not files: raise FileNotFoundError(f'no episode_*.npz in {roots}')
         self.cameras, self.chunk, self.proprio_keys = tuple(cameras), chunk, tuple(proprio)
         images, proprios, labels, masks, index = [], [], [], [], []
         for e, f in enumerate(files):
@@ -42,7 +42,7 @@ class Demos:
             index += [(e, i, t) for i, t in enumerate(keep)]
         self.images, self.proprios, self.labels, self.masks = images, proprios, labels, masks
         self.index = np.array(index)
-        self.files = [os.path.basename(f) for f in files]
+        self.files = [os.path.relpath(f) for f in files]
         allp, alll = np.concatenate(proprios), np.concatenate([l[:-chunk] for l in labels])
         self.stats = dict(proprio_mean=allp.mean(0), proprio_std=np.maximum(allp.std(0), 1e-2),
                           action_mean=alll.mean(0), action_std=np.maximum(alll.std(0), 1e-2))
@@ -66,8 +66,14 @@ class Demos:
         return self.batch(self.index[rng.integers(0, len(self.index), n)], rng)
 
 
-def split_episodes(root, val=2, seed=0):
-    n = len(glob.glob(os.path.join(root, 'episode_*.npz')))
+def episode_files(roots):
+    """Sorted episode files of one demo directory or a list of them."""
+    roots = [roots] if isinstance(roots, str) else roots
+    return [f for r in roots for f in sorted(glob.glob(os.path.join(r, 'episode_*.npz')))]
+
+
+def split_episodes(roots, val=2, seed=0):
+    n = len(episode_files(roots))
     order = np.random.default_rng(seed).permutation(n)
     return sorted(order[val:].tolist()), sorted(order[:val].tolist())
 
