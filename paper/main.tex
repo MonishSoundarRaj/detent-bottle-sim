@@ -61,16 +61,16 @@ The detent-bottle task asks two Franka Panda arms in MuJoCo to hold a bottle, fo
 detent, and press a rocker button that springs the lid open. We turn the task into a benchmark for learned
 policies. We randomize the bottle pose, record scripted demonstrations in the Gym interface, and evaluate every
 policy on fixed held-out poses inside (\ttt{test\_id}) and outside (\ttt{test\_ood}) the training range. Along
-the way we found that the reference opener's demonstrations cannot be learned by a reactive policy. The arm
-reaches each target early and then sits still until a timer expires, so the moment to close the gripper is
-invisible. An ACT policy trained on them scored \TimedId\% even though it followed the expert to within a few
+the way we found that ACT could not learn from the reference opener's demonstrations. The arm reaches each
+target early and then sits still until a timer expires, so the moment to close the gripper is not visible in the
+observation. An ACT policy trained on them scored \TimedId\% even though it followed the expert to within a few
 millimetres. Ending each segment once the robot comes to rest raised the same ACT to \VtwoId\% on
 \ttt{test\_id} and \VtwoOod\% on \ttt{test\_ood}, using only cameras and joint readings. We then tested two
 ideas for positions outside the training range: a wider training range and DART-style noise injection. With a
 fixed budget of about 200 demonstrations, spreading them over a \WideVolume$\times$ larger pose box cut
 \ttt{test\_id} success to \AId\%. Adding wide demonstrations to the original ones gave the best \ttt{test\_ood}
 score (\COod\%) but lost precision at the button press. Noise bursts gave no consistent gain once demonstration
-density was matched.
+density was matched. All results are for ACT with one training seed per configuration.
 \end{abstract}
 
 \begin{figure*}[t]
@@ -115,8 +115,9 @@ This report covers the policy-learning part of the project. Our contributions ar
   \item a \textbf{benchmark layer} (\ttt{bench/}). It provides randomized bottle poses, a pose-aware scripted
   expert, demonstration collection in the Gym format, and a shared evaluation harness with fixed in-range and
   out-of-range test poses that any policy can plug into (Sec.~\ref{sec:bench});
-  \item a \textbf{diagnosis of why the reference demonstrations cannot be learned} by reactive policies (idle
-  waits), and a fix that changes the expert only where it is idle (Sec.~\ref{sec:idle});
+  \item a \textbf{likely explanation for why ACT fails on the reference demonstrations} (idle waits that are
+  not visible in the observation), and a fix that changes the expert only where it is idle
+  (Sec.~\ref{sec:idle});
   \item an \textbf{ACT baseline} that uses cameras and proprioception only and reaches \VtwoId\% on
   \ttt{test\_id} (Sec.~\ref{sec:act});
   \item a \textbf{study of pose coverage and noise injection} for out-of-range poses, with the negative and
@@ -233,11 +234,12 @@ itself.}
 \label{fig:pipeline}
 \end{figure*}
 
-\section{Idle waits make the reference demonstrations unlearnable}\label{sec:idle}
+\section{Idle waits in the reference demonstrations}\label{sec:idle}
 Our first ACT, trained on 100 timed demonstrations, scored \TimedIdK{} on \ttt{test\_id} and \TimedOodK{} on
 \ttt{test\_ood}. It brought both hands to within a few millimetres of the grasp points and then never closed
-either gripper. The model and the deployment code were not at fault. Replayed open-loop on held-out
-demonstrations, its predicted targets at the grip and the pinch were within 1--3\,mm of the expert's.
+either gripper. Replayed open-loop on held-out demonstrations, its predicted targets at the grip and the
+pinch were within 1--3\,mm of the expert's. So it had learned where to go but not when to close. This check
+does not rule out every model or deployment problem, but it points at the timing of the gripper commands.
 
 The cause is in the demonstrations (Fig.~\ref{fig:idle}). Each segment of the reference opener lasts a fixed
 number of ticks. In most of them the arm reaches its target early and then stays completely still until the
@@ -245,9 +247,10 @@ clock runs out, and only then does the gripper close or the next move begin. Ove
 \TimedIdlePct\% of all ticks belong to such idle stretches of at least 10 ticks. There are \TimedIdleRuns{} of
 them per episode, with a median length of \TimedIdleMedian{} ticks and a maximum of \TimedIdleMax. During a
 stretch the observation barely changes while the correct action switches from ``wait'' to ``close''. A policy
-that sees only the current observation (or a short history) cannot tell when the wait is over. Averaging over
-the two labels, it waits forever. Diffusion policies~\cite{diffusion_policy} or VLAs trained on the same data
-would face the same ambiguity.
+that sees only the current observation (or a short history) has no visible cue for when the wait is over, and
+a loss that averages the two labels favours waiting, which matches what we observed. We tested this with ACT
+only. Policies that model multimodal actions, such as diffusion policies~\cite{diffusion_policy}, or that have
+longer memory may be affected differently.
 
 The fix changes only the expert's timing. A settle expert (\ttt{--settle}) ends a segment once two conditions
 hold for 3 consecutive ticks: both tools are within 1.5\,mm of their targets, and the joints and fingers have
@@ -315,24 +318,28 @@ cores.
 
 \begin{table*}[t]
 \centering
-\caption{Success rate and loop-folded rate (\%) on the held-out splits. \emph{Demos} is the number of
-training demonstrations, with the number inside the \ttt{test\_id} box ($\pm4$\,cm, $\pm10^\circ$) in
-brackets. A--D are trained on wide-range data, so for them \ttt{test\_ood} lies inside the training range.
-Wilson 95\% intervals are about $\pm$15 points at $n=30$ and $\pm$20 at $n=20$.}
+\caption{How far each policy gets (\% of episodes) on the held-out splits, in task order. \emph{Moved}: the
+safety loop was pinched and pushed past $20^\circ$. \emph{Folded}: it was folded past the detent
+($>150^\circ$). \emph{Success}: the button was pressed and the lid opened with the bottle upright.
+\emph{Demos} is the number of training demonstrations, with the number inside the \ttt{test\_id} box
+($\pm4$\,cm, $\pm10^\circ$) in brackets. A--D are trained on wide-range data, so for them \ttt{test\_ood} lies
+inside the training range. Wilson 95\% intervals are about $\pm$15 points at $n=30$ and $\pm$20 at $n=20$.}
 \label{tab:results}
 \small
-\begin{tabular}{@{}lrrrrr@{}}
+\begin{tabular}{@{}lrrrrrrr@{}}
 \toprule
-& & \multicolumn{2}{c}{\ttt{test\_id} (30)} & \multicolumn{2}{c}{\ttt{test\_ood} (20)} \\
-\cmidrule(lr){3-4}\cmidrule(l){5-6}
-Policy & Demos (in box) & success & loop folded & success & loop folded \\
+& & \multicolumn{3}{c}{\ttt{test\_id} (30)} & \multicolumn{3}{c}{\ttt{test\_ood} (20)} \\
+\cmidrule(lr){3-5}\cmidrule(l){6-8}
+Policy & Demos (in box) & moved & folded & success & moved & folded & success \\
 \midrule
 \input{figures/results_table.tex}
 \end{tabular}
 \end{table*}
 
 \section{Results}\label{sec:results}
-Table~\ref{tab:results} and Fig.~\ref{fig:results} summarise all runs. ACT v2, trained on 100 settle
+Table~\ref{tab:results} and Fig.~\ref{fig:results} summarise all runs. The table also shows the stage each
+run reached. ACT trained on timed demonstrations never moves the loop (\TimedIdMovedK{} and \TimedOodMovedK{}),
+so it fails at the first contact. ACT v2, trained on 100 settle
 demonstrations, succeeds on \VtwoIdK{} \ttt{test\_id} poses (\VtwoId\%) at about 500 ticks per success. Of its
 four failures, two never reach the loop, one folds the loop but misses the button, and one leans the bottle
 about $30^\circ$ during the fold and never gets the loop past the detent. On \ttt{test\_ood} it reaches \VtwoOod\%. It mostly fails before folding the loop, often after
@@ -344,11 +351,12 @@ injection~\cite{dart}. For the latter, the expert's executed motion is perturbed
 is recorded as the label, so the data shows recoveries. Continuous noise kept the arm from ever settling, which
 would bring the timer back. We therefore used short bursts instead: 6 ticks of noise ($\sigma=0.15$ in action
 units, about 3\,mm of target jitter) starting on average every 30 ticks. All four models (A--D) differ only in
-their data.
+their data. Because every policy is evaluated on the same poses, we compare two policies with an exact
+McNemar test on the poses where exactly one of them succeeds (two-sided).
 
 \paragraph{Wide only (A).} We spent the same budget of about 200 demonstrations on the whole $\pm6$\,cm,
 $\pm20^\circ$ box (\CollWideA{} and \CollWideB{} kept). Success fell to \AId\% on \ttt{test\_id}
-($p \PwideId$ against v2, two-sided Fisher exact test) and \AOod\% on \ttt{test\_ood}, even though
+($p \PwideId$ against v2) and \AOod\% on \ttt{test\_ood}, even though
 \ttt{test\_ood} is now inside the training range. The outer box has \WideVolume{} times the volume, so only
 \AInBox{} of the \ADemos{} demonstrations fall inside the \ttt{test\_id} box, against all 100 for v2. A
 replayed failure shows why this matters (Fig.~\ref{fig:outcomes}, right). A reaches the loop, closes its
@@ -366,11 +374,11 @@ original ones. It has the best \ttt{test\_ood} score, \COod\%, but this is not s
 \PmixOod$). Its \ttt{test\_id} score fell to \CId\% ($p \PmixId$). It folds the loop in 93\% of \ttt{test\_id}
 episodes, more often than v2, and 12 of its 13 failures then miss the button and push the bottle instead. Its
 validation loss was still falling at 25k steps, and it sees each demonstration about a third as often as v2
-did, so it is probably undertrained. Model D swaps the second clean wide half for the noisy demonstrations,
+did, so it may be undertrained; a longer run would test this. Model D swaps the second clean wide half for the noisy demonstrations,
 which matches C's demonstration density (\DInBox{} against \CInBox{} in the box). D scores \DId\% on
-\ttt{test\_id} ($p \PmixNoiseId$ against C) and \DOod\% on \ttt{test\_ood} ($p \PmixNoiseOod$). With density
-matched, noise bursts did not help. The \ttt{test\_ood} drop may partly come from D having fewer
-demonstrations outside the box: 126 against 151, and only 75 of D's are clean.
+\ttt{test\_id} ($p \PmixNoiseId$ against C) and \DOod\% on \ttt{test\_ood} ($p \PmixNoiseOod$). Neither
+difference is significant. With density matched, noise bursts did not help on either split. D also has fewer
+demonstrations outside the \ttt{test\_id} box than C (126 against 151, and only 75 of D's are clean).
 
 \begin{figure}[t]
 \centering
@@ -439,8 +447,8 @@ fingers close on empty space beside it.}
 \begin{itemize}\itemsep0pt
   \item \textbf{Demonstration timing.} This was the largest effect we found: the same model went from \TimedId\%
   to \VtwoId\% by changing when the expert moves on, not what it does. Any scripted or teleoperated data with
-  waits that cannot be seen in the observation should be checked for this before training. A policy with
-  memory or an explicit phase input would be another way around it.
+  waits that cannot be seen in the observation should be checked for this before training. We showed the
+  effect for ACT only. A policy with memory or an explicit phase input might avoid it.
   \item \textbf{Density.} The wide-range results suggest that ACT at this scale (100--300 demonstrations)
   interpolates locally. Extra coverage helps the coarse phases (reaching and folding) but not the precise ones
   (the pinch and the button press) unless the demonstrations are dense near the test poses. More data, longer
@@ -452,9 +460,15 @@ fingers close on empty space beside it.}
   \item \textbf{Statistics.} Each configuration has one training seed, and the test splits are small: 30 and 20
   episodes, with 95\% intervals of $\pm15$--20 points. We ran several comparisons and did not correct for
   that. Only the large effects should be read as established: timed against settle, v2 against A, and A
-  against B (with the density caveat).
-  \item \textbf{Expert ceiling.} The privileged expert fails at yaw below about $-15^\circ$, so
-  demonstrations are missing there and \ttt{test\_ood} cannot exceed 90\%.
+  against B (with the density caveat). All conclusions hold for this training configuration.
+  \item \textbf{Expert baseline.} Our privileged scripted expert fails at yaw below about $-15^\circ$, so the
+  wide training data has few demonstrations there. Its 90\% on \ttt{test\_ood} is the score of this scripted
+  sequence, not an upper bound on what a policy can reach.
+  \item \textbf{Future work.} A longer training run for C would separate undertraining from a coverage and
+  precision trade-off. Training on the timed demonstrations with the idle frames down-weighted, or with an
+  explicit phase input, would test the idle-wait explanation more directly. Training a diffusion
+  policy~\cite{diffusion_policy} or $\pi_0$~\cite{pi0} on both timed and settle demonstrations would show
+  whether the timing effect extends beyond ACT.
 \end{itemize}
 
 \section{Using the benchmark}
@@ -469,12 +483,12 @@ python -m bench.evaluate --policy mod:make_policy \
     --split test_id test_ood --name NAME
 python -m bench.report
 \end{verbatim}}
-Training on timed demonstrations is likely to reproduce the 0\% result of Sec.~\ref{sec:idle}.
+Use settle demonstrations: ACT trained on timed demonstrations scored 0\% (Sec.~\ref{sec:idle}).
 
 \section{Conclusion}
 We turned the detent-bottle environment into a benchmark with randomized poses and fixed held-out splits. We
-found that the reference demonstrations are unlearnable for reactive policies because of invisible idle waits,
-and fixed that. An ACT baseline then reaches \VtwoId\% in range and \VtwoOod\% out of range from cameras and
+found that ACT fails on the reference demonstrations, most likely because of idle waits that are not visible
+in the observation, and that removing the waits fixes it. An ACT baseline then reaches \VtwoId\% in range and \VtwoOod\% out of range from cameras and
 joint readings alone. Widening the training range and adding noise bursts did not reliably improve
 out-of-range success with about 200--300 demonstrations. The clearest lesson is that, at this scale,
 demonstrations must be dense where the policy is tested.

@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import numpy as np
-from scipy.stats import fisher_exact
+from scipy.stats import binomtest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -31,6 +31,7 @@ MODELS = [   # eval run, label in figures, macro prefix in stats.tex, demo direc
     ('act_v3_mix_noise', 'D', 'D', ['expert_v2', 'expert_v3_wide_a', 'expert_v3_wide_noise']),
 ]
 JOINT_TOL, GRIP_TOL, IDLE_MIN = 1e-4, 1e-5, 10   # same stillness test as bench/expert.py; idle = still for 10+ ticks
+LOOP_MOVED_DEG = 20   # the loop rests below 5 deg, so past 20 deg it was pinched and pushed
 
 
 def path(*p):
@@ -139,7 +140,7 @@ def results(stats):
             k, n = sum(e['success'] for e in eps), len(eps)
             lo, hi = wilson(k, n)
             row += [round(100 * k / n, 1), round(100 * (k / n - lo), 1), round(100 * (hi - k / n), 1)]
-            line[s] = (k, n, summary[s]['loop_folded_rate'])
+            line[s] = (k, n, summary[s]['loop_folded_rate'], sum(e['max_loop_deg'] > LOOP_MOVED_DEG for e in eps) / n)
         if dirs:
             P = np.array([np.load(f)['pose'] for f in demo_files(dirs)])
             line['demos'], line['in_box'] = len(P), int(in_box(P).sum())
@@ -152,26 +153,32 @@ def results(stats):
                  act_v3_wide_noise='B: wide + noisy wide', act_v3_mix='C: v2 + wide', act_v3_mix_noise='D: v2 + wide + noisy wide')
     with open(os.path.join(FIG, 'results_table.tex'), 'w') as f:
         for line in table:
-            k1, n1, f1 = line['test_id']; k2, n2, f2 = line['test_ood']
             demos = f"{line['demos']} ({line['in_box']})" if 'demos' in line else '--'
-            cell = lambda k, n, fold: f'{100 * k / n:.1f} & {100 * fold:.0f}'
             bold = line['run'] == 'act_v2_l3'
-            c1 = cell(k1, n1, f1); c1 = '\\textbf{' + c1.replace(' & ', '} & ', 1) if bold else c1
-            f.write(f"{names[line['run']]} & {demos} & {c1} & {cell(k2, n2, f2)} \\\\\n")
+            cells = []
+            for s in ('test_id', 'test_ood'):
+                k, n, fold, moved = line[s]
+                ok = f'{100 * k / n:.1f}'
+                if bold and s == 'test_id': ok = '\\textbf{' + ok + '}'
+                cells.append(f'{100 * moved:.0f} & {100 * fold:.0f} & {ok}')
+            f.write(f"{names[line['run']]} & {demos} & {' & '.join(cells)} \\\\\n")
             if line['run'] in ('expert_settle', 'act_v2_l3'): f.write('\\midrule\n')
         f.write('\\bottomrule\n')   # here, not in main.tex: a rule right after \\input breaks inside tabular
     by = {line['run']: line for line in table}
     for line in table:
         key = line['key']
         for s, tag in (('test_id', 'Id'), ('test_ood', 'Ood')):
-            k, n, _ = line[s]
+            k, n, _, moved = line[s]
             stats[f'{key}{tag}'] = pct(k, n)
             stats[f'{key}{tag}K'] = f'{k}/{n}'
+            stats[f'{key}{tag}MovedK'] = f'{round(moved * n)}/{n}'
         if 'demos' in line: stats[f'{key}Demos'], stats[f'{key}InBox'] = line['demos'], line['in_box']
 
-    def p(a, b, s):
-        (k1, n1, _), (k2, n2, _) = by[a][s], by[b][s]
-        v = fisher_exact([[k1, n1 - k1], [k2, n2 - k2]])[1]
+    def p(a, b, s):   # exact McNemar: every policy runs the same poses, so compare them pose by pose
+        A, B = ({tuple(np.round(e['pose'], 4)): e['success'] for e in episodes(r, s)} for r in (a, b))
+        assert A.keys() == B.keys(), (a, b, s)
+        only_a, only_b = sum(A[q] and not B[q] for q in A), sum(B[q] and not A[q] for q in A)
+        v = binomtest(min(only_a, only_b), only_a + only_b).pvalue if only_a + only_b else 1.
         return '< .001' if v < .001 else '= ' + f'{v:.2f}'.lstrip('0')
     stats.update(PwideNoiseId=p('act_v3_wide', 'act_v3_wide_noise', 'test_id'), PwideNoiseOod=p('act_v3_wide', 'act_v3_wide_noise', 'test_ood'),
                  PmixId=p('act_v2_l3', 'act_v3_mix', 'test_id'), PmixOod=p('act_v2_l3', 'act_v3_mix', 'test_ood'),
