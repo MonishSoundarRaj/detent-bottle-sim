@@ -32,20 +32,21 @@ training and testing.
   if the bottle leaves the table. A bottle lying on its side runs to the time limit. The harness
   (`bench/rollout.py`) ends those episodes as `bottle_tipped` once the tilt passes 60 deg. The
   env itself is unchanged.
-- **The reference opener's idle waits make its demos unlearnable for a reactive policy.** Every
+- **ACT cannot learn from the reference opener's demos, most likely because of its idle waits.** Every
   segment lasts a fixed number of ticks. In most of them the arm reaches its target early, then
   sits still (25-46 ticks, joint motion exactly 0, camera frames nearly identical) until the
   clock runs out, and only then does the gripper close or the next move start. A policy that
-  sees only the current observation cannot tell when the wait is over. ACT trained on 100 such
+  sees only the current observation has no visible cue for when the wait is over. ACT trained on 100 such
   demos (`expert_v1`) reaches the bottle within a few mm but never closes either gripper, so it
   scores 0/50. In open-loop replay on held-out demos its targets are within 1-3 mm at the grip
-  and pinch, so the model and the deployment code are not the problem. Diffusion policy or a VLA
-  trained on the same demos will hit the same wall. `ScriptedExpert(settle=True)`
+  and pinch, so it learned where to go but not when to close. We have only tested ACT. Diffusion
+  policy or a VLA trained on the same demos may behave differently. `ScriptedExpert(settle=True)`
   (`collect.py --settle`) ends a segment once both tools are on target and the robot has been
   still for 3 ticks, keeping the original tick count as the upper bound. Episodes drop from
   ~714 to ~524 ticks. Contact segments (pinch, fold, press) still run their full length. The
   default `settle=False` reproduces `expert_v1` action for action.
-- **Results so far (`python -m bench.report`):**
+- **Results so far (`python -m bench.report`):** p-values are two-sided exact McNemar tests on
+  per-pose outcomes, since every policy runs the same test poses.
 
   | policy | split | success | loop folded | notes |
   |---|---|---|---|---|
@@ -62,9 +63,9 @@ training and testing.
   | ACT on `expert_v3_wide_a` + `_noise` (94 clean + 83 noisy `train_wide` demos, layer 3, 25k steps) | test_id (30) | 63.3% | 80% | 15/23 at y < 0. Wins 16 poses the clean wide model lost and loses 5 it won. 5 of 11 failures fold the loop but miss the button |
   | ACT on `expert_v3_wide_a` + `_noise` | test_ood (20) | 40% | 50% | Same as v2 (7/20) within noise. 1 tipped bottle |
   | ACT on `expert_v2` + `_wide_a` + `_wide_b` (287 clean demos, layer 3, 25k steps) | test_id (30) | 56.7% | 93.3% | Folds the loop more often than v2, but 12 of 13 failures then miss the button and push the bottle (tilt 15-30 deg, 1-7 cm). 11 of the 13 are at y < 0 |
-  | ACT on `expert_v2` + `_wide_a` + `_wide_b` | test_ood (20) | 50% | 75% | Best test_ood so far, but not significantly above v2 (p = .52) |
+  | ACT on `expert_v2` + `_wide_a` + `_wide_b` | test_ood (20) | 50% | 75% | Best test_ood so far, but not significantly above v2 (p = .55) |
   | ACT on `expert_v2` + `_wide_a` + `_noise` (194 clean + 83 noisy, layer 3, 25k steps) | test_id (30) | 66.7% | 76.7% | All 10 failures at y < 0. 7 never fold the loop |
-  | ACT on `expert_v2` + `_wide_a` + `_noise` | test_ood (20) | 15% | 40% | Worse than the clean mix (10/20, p = .04). 12 of 17 failures never fold the loop |
+  | ACT on `expert_v2` + `_wide_a` + `_noise` | test_ood (20) | 15% | 40% | Below the clean mix (10/20), not significantly (p = .09). 12 of 17 failures never fold the loop |
 
 - **Spreading the same demo budget over the wide range made ACT worse everywhere.** The wide
   box is 4.5 times the volume of the train box. Only 36 of the 187 wide demos fall inside the
@@ -72,7 +73,7 @@ training and testing.
   v2's, but its pinch lands about 1 cm off, which is enough to miss the loop. At this data scale
   ACT needs dense demos where it is tested.
 - **Swapping half the clean wide demos for noisy ones helped a lot on test_id, but density is a
-  confound.** 19/30 against 8/30 (Fisher p = .009), with 10 fewer demos in total. On test_ood
+  confound.** 19/30 against 8/30 (p = .03), with 10 fewer demos in total. On test_ood
   the gain (8/20 against 4/20) is within noise. However, the noisy collection drew 40 of its
   120 poses inside the test_id box by chance, and failed less often there. So the noisy model
   has 51 demos in that box, against 36 for the clean wide model. Part of the gain may come from
@@ -80,16 +81,16 @@ training and testing.
 - **With the density matched, the noise bursts did not help.** `expert_v2` + `_wide_a` + `_noise`
   (277 demos, 151 in the box) against `expert_v2` + `_wide_a` + `_wide_b` (287 clean, 136 in the
   box) scored 20/30 against 17/30 on test_id (p = .6) and 3/20 against 10/20 on test_ood
-  (p = .04). The noisy set also leaves fewer demos outside the test_id box (126 against 151,
-  and only 75 of its 126 are clean), which may explain part of the test_ood drop. So there is no consistent evidence that
+  (p = .09). Neither difference is significant. The noisy set also leaves fewer demos outside the test_id box (126 against 151,
+  and only 75 of its 126 are clean), which may explain part of the test_ood gap. So there is no consistent evidence that
   these noise bursts help ACT, and the earlier gain was most likely the density confound. The
   noisy collection keeps only the 69% of runs the bursts did not break, so it may simply not
   contain the recoveries the method relies on.
 - **Adding the wide demos to `expert_v2` traded test_id for test_ood.** test_id fell from 26/30
-  to 17/30 (p = .02) and test_ood rose from 7/20 to 10/20 (p = .52). The loop is folded in
+  to 17/30 (p = .02) and test_ood rose from 7/20 to 10/20 (p = .55). The loop is folded in
   28/30 test_id episodes, so the reach and fold improved, and the losses are almost all at the
   button press. Its validation L1 was still falling at 25k steps (.067, .054, .052, .048, .046
-  at 5k-step intervals). It sees each demo about a third as often as v2 did, so it is probably
+  at 5k-step intervals). It sees each demo about a third as often as v2 did, so it may be
   undertrained. A longer run would test that.
 
 - **Training speed (MPS), 5 cameras at 96 px, batch 32:** on an M5 (10-core GPU), 1.6 steps/s
@@ -110,6 +111,14 @@ training and testing.
 | `bench/collect.py` | Parallel demo collection in Gym format. Keeps only successful episodes |
 | `bench/evaluate.py` | Shared evaluation harness for any policy |
 | `bench/act/` | ACT baseline: model, in-memory dataset, trainer, policy wrapper |
+
+## Setup
+
+```bash
+pip install -e ".[dev,act]"   # [act] adds torch and torchvision, which only bench/act needs
+```
+
+Collection and evaluation of the scripted expert run on the core install.
 
 ## Collect demonstrations
 
